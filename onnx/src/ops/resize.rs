@@ -33,11 +33,11 @@ fn resize_10(node: &NodeProto) -> TractResult<Resize> {
 }
 
 fn resize_11(node: &NodeProto) -> TractResult<Resize> {
-    let mut options = crate::model::optional_inputs(node).skip(3);
+    let mut options = crate::model::optional_inputs(node).skip(1);
     Ok(Resize {
         axes: None,
-        optional_roi_input: Some(1),
-        optional_scales_input: Some(2),
+        optional_roi_input: options.next().unwrap(),
+        optional_scales_input: options.next().unwrap(),
         optional_sizes_input: options.next().unwrap(),
         coord_transformer: coord_transformer_from_node(node)?,
         interpolator: interpolator_from_node(node)?,
@@ -118,7 +118,7 @@ impl Expansion for ResizeInference {
         check_output_arity(outputs, 1)?;
         s.equals(&inputs[0].datum_type, &outputs[0].datum_type)?;
         s.equals(&inputs[0].rank, &outputs[0].rank)?;
-        if let Some(scales) = op.optional_scales_input {
+        if let Some(scales) = op.optional_scales_input.filter(|&ix| ix < inputs.len()) {
             s.given(&inputs[scales].shape[0], move |s, len| {
                 if len.is_zero() {
                     rules_with_sizes(op, s, inputs, outputs)
@@ -126,7 +126,7 @@ impl Expansion for ResizeInference {
                     rules_with_scales(op, s, inputs, outputs)
                 }
             })
-        } else if op.optional_sizes_input.is_some() {
+        } else if op.optional_sizes_input.filter(|&ix| ix < inputs.len()).is_some() {
             rules_with_sizes(op, s, inputs, outputs)
         } else {
             todo!()
