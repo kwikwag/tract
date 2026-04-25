@@ -3,14 +3,22 @@ use tract_nnef::internal::*;
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub enum CoordTransformer {
     HalfPixel,
+    PytorchHalfPixel,
     AlignCorners,
     Asymmetric,
 }
 
 impl CoordTransformer {
-    pub fn transform(&self, x_out: usize, scale: f32, len_in: usize, _len_out: usize) -> f32 {
+    pub fn transform(&self, x_out: usize, scale: f32, len_in: usize, len_out: usize) -> f32 {
         match self {
             CoordTransformer::HalfPixel => (x_out as f32 + 0.5) / scale - 0.5,
+            CoordTransformer::PytorchHalfPixel => {
+                if len_out > 1 {
+                    (x_out as f32 + 0.5) / scale - 0.5
+                } else {
+                    0.0
+                }
+            }
             CoordTransformer::AlignCorners => {
                 let output_width = scale * len_in as f32;
                 if output_width == 1.0 {
@@ -26,6 +34,7 @@ impl CoordTransformer {
     pub fn as_str(&self) -> &'static str {
         match self {
             CoordTransformer::HalfPixel => "half_pixel",
+            CoordTransformer::PytorchHalfPixel => "pytorch_half_pixel",
             CoordTransformer::AlignCorners => "align_corners",
             CoordTransformer::Asymmetric => "asymmetric",
         }
@@ -34,6 +43,7 @@ impl CoordTransformer {
     pub fn parse(s: &str) -> TractResult<Self> {
         Ok(match s {
             "half_pixel" => CoordTransformer::HalfPixel,
+            "pytorch_half_pixel" => CoordTransformer::PytorchHalfPixel,
             "align_corners" => CoordTransformer::AlignCorners,
             "asymmetric" => CoordTransformer::Asymmetric,
             s => bail!("coordinate_transformation_mode: {s}"),
@@ -560,5 +570,45 @@ mod tests {
         let result = op.eval(tvec!(input_tensor, scales_tensor)).unwrap();
         let shape = result[0].shape();
         assert_eq!(shape, &[4, 4]);
+    }
+
+    #[test]
+    fn pytorch_half_pixel_parse_and_dump() {
+        let parsed = CoordTransformer::parse("pytorch_half_pixel").unwrap();
+        assert_eq!(parsed, CoordTransformer::PytorchHalfPixel);
+        assert_eq!(parsed.as_str(), "pytorch_half_pixel");
+    }
+
+    #[test]
+    fn pytorch_half_pixel_singleton_output_transform() {
+        let transformer = CoordTransformer::PytorchHalfPixel;
+        assert_eq!(transformer.transform(0, 2.0, 4, 1), 0.0);
+    }
+
+    #[test]
+    fn resize_uses_sizes_when_scales_is_empty() {
+        let input = tract_ndarray::arr2(&[
+            [1.0f32, 2.0, 3.0, 4.0],
+            [5.0, 6.0, 7.0, 8.0],
+            [9.0, 10.0, 11.0, 12.0],
+            [13.0, 14.0, 15.0, 16.0],
+        ])
+        .into_tensor()
+        .into_tvalue();
+        let scales = tract_ndarray::Array1::<f32>::zeros(0).into_tensor().into_tvalue();
+        let sizes = tract_ndarray::arr1(&[2i64, 6]).into_tensor().into_tvalue();
+        let op = Resize {
+            axes: None,
+            coord_transformer: CoordTransformer::Asymmetric,
+            interpolator: Interpolator::Nearest,
+            nearest: Nearest::Floor,
+            cubic_coeff_a_bits: (-0.75f32).to_bits(),
+            exclude_outside: false,
+            optional_roi_input: None,
+            optional_scales_input: Some(1),
+            optional_sizes_input: Some(2),
+        };
+        let output = op.eval(tvec!(input, scales, sizes)).unwrap();
+        assert_eq!(output[0].shape(), &[2, 6]);
     }
 }
